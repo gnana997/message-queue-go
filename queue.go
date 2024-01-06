@@ -12,40 +12,51 @@ type Message struct {
 }
 
 type Config struct {
-	ListenAddr          string
+	HTTPListenAddr      string
+	WSListenAddr        string
 	StorageProducerFunc StorageProducerFunc
 }
 
 type Queue struct {
 	*Config
 
-	topics map[string]Storage
-
+	topics    map[string]Storage
+	peers     map[Peer]bool
 	consumers []Consumer
 	producers []Producer
 	producech chan Message
+	peerch    chan Peer
 	quitch    chan struct{}
 }
 
 func NewQueue(cfg *Config) (*Queue, error) {
 	producech := make(chan Message)
+	peerch := make(chan Peer)
 	return &Queue{
 		Config: cfg,
 		topics: make(map[string]Storage),
 		producers: []Producer{
-			NewHTTPProducer(cfg.ListenAddr, producech),
+			NewHTTPProducer(cfg.HTTPListenAddr, producech),
 		},
 		producech: producech,
-		quitch:    make(chan struct{}),
+		peerch:    peerch,
+		peers:     make(map[Peer]bool),
+		consumers: []Consumer{
+			NewWSConsumer(cfg.WSListenAddr, peerch),
+		},
+		quitch: make(chan struct{}),
 	}, nil
 }
 
 func (q *Queue) Start() {
-	// for _, consumer := range q.consumers {
-	// 	if err := consumer.Start(); err != nil {
-	// 		fmt.Println(err)
-	// 	}
-	// }
+
+	for _, consumer := range q.consumers {
+		go func(c Consumer) {
+			if err := c.Start(); err != nil {
+				fmt.Println(err)
+			}
+		}(consumer)
+	}
 
 	for _, producer := range q.producers {
 		go func(p Producer) {
@@ -63,6 +74,9 @@ func (q *Queue) loop() {
 		select {
 		case <-q.quitch:
 			return
+		case peer := <-q.peerch:
+			slog.Info("added new connection", "peer", peer)
+			q.peers[peer] = true
 		case msg := <-q.producech:
 			fmt.Println("produced -> ", msg)
 			offset, err := q.publish(msg)

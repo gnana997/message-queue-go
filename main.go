@@ -6,7 +6,8 @@ import (
 
 func main() {
 	cfg := &Config{
-		ListenAddr: ":3000",
+		HTTPListenAddr: ":3000",
+		WSListenAddr:   ":4000",
 		StorageProducerFunc: func() Storage {
 			return NewMemoryStorage()
 		},
