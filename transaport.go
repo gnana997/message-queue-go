@@ -25,9 +25,9 @@ func (p *HTTPProducer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		parts = strings.Split(path, "/")
 	)
 
-	// commit
-	if r.Method == "GET" {
-	}
+	// // commit
+	// if r.Method == "GET" {
+	// }
 
 	if r.Method == "POST" {
 		if len(parts) != 2 {

@@ -12,12 +12,14 @@ type Peer interface {
 }
 
 type WSPeer struct {
-	conn *websocket.Conn
+	conn         *websocket.Conn
+	peerToTopics chan<- PeerToTopics
 }
 
-func NewWSPeer(conn *websocket.Conn) *WSPeer {
+func NewWSPeer(conn *websocket.Conn, peerToTopics chan PeerToTopics) *WSPeer {
 	p := &WSPeer{
-		conn: conn,
+		conn:         conn,
+		peerToTopics: peerToTopics,
 	}
 
 	go p.readLoop()
@@ -41,10 +43,19 @@ func (p *WSPeer) readLoop() {
 
 func (p *WSPeer) handleMessage(msg WSMessage) error {
 	// validation of message
+	if len(msg.Topics) == 0 {
+		return fmt.Errorf("no topics specified")
+	}
+	p.peerToTopics <- PeerToTopics{
+		Peer:   p,
+		Action: msg.Action,
+		Topics: msg.Topics,
+	}
 	fmt.Printf("handling message %+v \n", msg)
 	return nil
 }
 
 func (p *WSPeer) Send(b []byte) error {
+	fmt.Println("Inside message: ", string(b))
 	return p.conn.WriteMessage(websocket.BinaryMessage, b)
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"log/slog"
 
 	"github.com/gorilla/websocket"
 )
@@ -19,7 +20,7 @@ func main() {
 
 	msg := WSMessage{
 		Action: "subscribe",
-		Topics: []string{"foobar"},
+		Topics: []string{"topic_1", "topic_2", "foobar"},
 	}
 
 	// b, err := json.Marshal(msg)
@@ -32,10 +33,11 @@ func main() {
 	}
 
 	for {
-		msg := WSMessage{}
-
-		if err := conn.ReadJSON(&msg); err != nil {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
 			log.Fatal(err)
 		}
+
+		slog.Info("received message", "message", string(msg))
 	}
 }
