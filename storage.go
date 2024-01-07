@@ -10,6 +10,7 @@ type StorageProducerFunc func() Storage
 type Storage interface {
 	Push([]byte) (int, error)
 	Fetch(int) ([]byte, error)
+	Size() int
 }
 
 type MemoryStorage struct {
@@ -44,4 +45,11 @@ func (m *MemoryStorage) Fetch(offset int) ([]byte, error) {
 	}
 
 	return m.data[offset], nil
+}
+
+func (m *MemoryStorage) Size() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return len(m.data) - 1
 }

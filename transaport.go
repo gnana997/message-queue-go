@@ -9,10 +9,10 @@ import (
 
 type HTTPProducer struct {
 	listenAddr string
-	producech  chan<- Message
+	producech  chan<- MessageToTopic
 }
 
-func NewHTTPProducer(listenAddr string, producech chan Message) *HTTPProducer {
+func NewHTTPProducer(listenAddr string, producech chan MessageToTopic) *HTTPProducer {
 	return &HTTPProducer{
 		listenAddr: listenAddr,
 		producech:  producech,
@@ -35,7 +35,7 @@ func (p *HTTPProducer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		topic := parts[1]
-		p.producech <- Message{
+		p.producech <- MessageToTopic{
 			Payload: []byte("we don't know yet"),
 			Topic:   topic,
 		}
