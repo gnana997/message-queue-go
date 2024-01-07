@@ -10,18 +10,25 @@ import (
 
 type Peer interface {
 	Send([]byte) error
+	GetPeerSubscription() <-chan string
 }
 
 type WSPeer struct {
 	mu               sync.RWMutex
 	conn             *websocket.Conn
+	topics           []string
 	peerTopicsAction chan<- PeerTopicsAction
+	PeerSubscription chan string
 }
 
 func NewWSPeer(conn *websocket.Conn, peerTopicsAction chan PeerTopicsAction) *WSPeer {
+	peerSubscription := make(chan string)
+	topics := []string{}
 	p := &WSPeer{
 		conn:             conn,
 		peerTopicsAction: peerTopicsAction,
+		PeerSubscription: peerSubscription,
+		topics:           topics,
 	}
 
 	go p.readLoop()
@@ -53,6 +60,10 @@ func (p *WSPeer) handleMessage(msg WSMessage) error {
 		Action: msg.Action,
 		Topics: msg.Topics,
 	}
+	if len(p.topics) > 0 {
+		p.PeerSubscription <- "update"
+	}
+	p.topics = append(p.topics, msg.Topics...)
 	fmt.Printf("handling message %+v \n", msg)
 	return nil
 }
@@ -62,4 +73,8 @@ func (p *WSPeer) Send(b []byte) error {
 	defer p.mu.Unlock()
 
 	return p.conn.WriteMessage(websocket.BinaryMessage, b)
+}
+
+func (p *WSPeer) GetPeerSubscription() <-chan string {
+	return p.PeerSubscription
 }

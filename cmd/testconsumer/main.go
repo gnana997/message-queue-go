@@ -27,7 +27,7 @@ func main() {
 
 	msg := WSMessage{
 		Action: "subscribe",
-		Topics: []string{"topic_1", "topic_2", "foobar"},
+		Topics: []string{"topic_1", "topic_2"},
 	}
 
 	// b, err := json.Marshal(msg)
