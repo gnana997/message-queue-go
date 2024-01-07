@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/gorilla/websocket"
 )
@@ -12,14 +13,15 @@ type Peer interface {
 }
 
 type WSPeer struct {
-	conn         *websocket.Conn
-	peerToTopics chan<- PeerToTopics
+	mu               sync.RWMutex
+	conn             *websocket.Conn
+	peerTopicsAction chan<- PeerTopicsAction
 }
 
-func NewWSPeer(conn *websocket.Conn, peerToTopics chan PeerToTopics) *WSPeer {
+func NewWSPeer(conn *websocket.Conn, peerTopicsAction chan PeerTopicsAction) *WSPeer {
 	p := &WSPeer{
-		conn:         conn,
-		peerToTopics: peerToTopics,
+		conn:             conn,
+		peerTopicsAction: peerTopicsAction,
 	}
 
 	go p.readLoop()
@@ -46,7 +48,7 @@ func (p *WSPeer) handleMessage(msg WSMessage) error {
 	if len(msg.Topics) == 0 {
 		return fmt.Errorf("no topics specified")
 	}
-	p.peerToTopics <- PeerToTopics{
+	p.peerTopicsAction <- PeerTopicsAction{
 		Peer:   p,
 		Action: msg.Action,
 		Topics: msg.Topics,
@@ -56,6 +58,8 @@ func (p *WSPeer) handleMessage(msg WSMessage) error {
 }
 
 func (p *WSPeer) Send(b []byte) error {
-	fmt.Println("Inside message: ", string(b))
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	return p.conn.WriteMessage(websocket.BinaryMessage, b)
 }

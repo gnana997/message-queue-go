@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -8,12 +9,18 @@ import (
 	"sync"
 )
 
-type Message struct {
+type MessageToTopic struct {
 	Topic   string
 	Payload []byte
 }
 
-type PeerToTopics struct {
+type MessageToPeer struct {
+	Topic   string `json:"topic"`
+	Payload []byte `json:"payload"`
+	Offset  int    `json:"offset"`
+}
+
+type PeerTopicsAction struct {
 	Peer   Peer
 	Action string
 	Topics []string
@@ -25,23 +32,29 @@ type Config struct {
 	StorageProducerFunc StorageProducerFunc
 }
 
+type PeerTopicDetails struct {
+	Offset int
+	Topic  string
+}
+
 type Queue struct {
 	*Config
-	mu           sync.RWMutex
-	topics       map[string]Storage
-	peers        map[Peer]map[string]struct{}
-	consumers    []Consumer
-	producers    []Producer
-	producech    chan Message
-	peerch       chan Peer
-	peerToTopics chan PeerToTopics
-	quitch       chan struct{}
+	mu               sync.RWMutex
+	topics           map[string]Storage
+	peers            map[Peer]bool
+	consumers        []Consumer
+	producers        []Producer
+	peerToTopics     map[Peer][]*PeerTopicDetails
+	producech        chan MessageToTopic
+	peerch           chan Peer
+	peerTopicsAction chan PeerTopicsAction
+	quitch           chan struct{}
 }
 
 func NewQueue(cfg *Config) (*Queue, error) {
-	producech := make(chan Message)
+	producech := make(chan MessageToTopic)
 	peerch := make(chan Peer)
-	peerToTopics := make(chan PeerToTopics)
+	peerTopicsAction := make(chan PeerTopicsAction)
 
 	return &Queue{
 		Config: cfg,
@@ -49,14 +62,15 @@ func NewQueue(cfg *Config) (*Queue, error) {
 		producers: []Producer{
 			NewHTTPProducer(cfg.HTTPListenAddr, producech),
 		},
-		producech:    producech,
-		peerch:       peerch,
-		peers:        make(map[Peer]map[string]struct{}),
-		peerToTopics: peerToTopics,
 		consumers: []Consumer{
-			NewWSConsumer(cfg.WSListenAddr, peerch, peerToTopics),
+			NewWSConsumer(cfg.WSListenAddr, peerch, peerTopicsAction),
 		},
-		quitch: make(chan struct{}),
+		peers:            make(map[Peer]bool),
+		peerToTopics:     make(map[Peer][]*PeerTopicDetails),
+		producech:        producech,
+		peerch:           peerch,
+		peerTopicsAction: peerTopicsAction,
+		quitch:           make(chan struct{}),
 	}, nil
 }
 
@@ -88,7 +102,7 @@ func (q *Queue) loop() {
 			return
 		case peer := <-q.peerch:
 			slog.Info("added new connection", "peer", peer)
-			q.peers[peer] = make(map[string]struct{})
+			q.peers[peer] = true
 		case msg := <-q.producech:
 			fmt.Println("produced -> ", msg)
 			offset, err := q.publish(msg)
@@ -97,67 +111,123 @@ func (q *Queue) loop() {
 			} else {
 				fmt.Printf("Produced message in topic %s with offset %d", msg.Topic, offset)
 			}
-		case peerToTopics := <-q.peerToTopics:
-			slog.Info("peer topics update", "peer", peerToTopics.Peer, "topics", peerToTopics.Topics)
+		case peerTopicsAction := <-q.peerTopicsAction:
+			slog.Info("peer topics update", "peer", peerTopicsAction.Peer, "topics", peerTopicsAction.Topics)
 			// update peer topics
-			for _, topic := range peerToTopics.Topics {
-				go q.handlePeerTopicsUpdate(peerToTopics.Peer, peerToTopics.Action, topic)
-			}
+			q.handlePeerTopicsUpdate(peerTopicsAction.Peer, peerTopicsAction.Action, peerTopicsAction.Topics)
 		}
 
 	}
 }
 
-func (q *Queue) handlePeerTopicsUpdate(peer Peer, action string, topic string) {
+func (q *Queue) handlePeerTopicsUpdate(peer Peer, action string, topics []string) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	switch action {
 	case "subscribe":
-		fmt.Println("Inside Handle Peer Topics Update", action, topic)
-		if _, ok := q.topics[topic]; !ok {
-			if err := peer.Send([]byte("topic not found")); err != nil {
-				if err == io.EOF {
-					delete(q.peers, peer)
-				} else {
-					log.Println(err)
+		fmt.Println("Inside Handle Peer Topics Update", action, topics)
+		for _, topic := range topics {
+			if _, ok := q.topics[topic]; !ok {
+				if err := peer.Send([]byte("topic not found")); err != nil {
+					if err == io.EOF {
+						delete(q.peers, peer)
+						delete(q.peerToTopics, peer)
+					} else {
+						log.Println(err)
+					}
 				}
-			}
-		} else {
-			q.peers[peer][topic] = struct{}{}
-			slog.Info("Peer subscribed to topics", "peer", peer, "topics", topic, "peersTopics", q.peers[peer])
-			if err := peer.Send([]byte("subscribed to " + topic)); err != nil {
-				if err == io.EOF {
-					delete(q.peers, peer)
-				} else {
-					log.Println(err)
+			} else {
+				q.peerToTopics[peer] = append(q.peerToTopics[peer], &PeerTopicDetails{
+					Offset: 0,
+					Topic:  topic,
+				})
+				slog.Info("Peer subscribed to topics", "peer", peer, "topics", topic, "peerTopicdetails", q.peerToTopics[peer][len(q.peerToTopics[peer])-1])
+				if err := peer.Send([]byte("subscribed to " + topic)); err != nil {
+					if err == io.EOF {
+						delete(q.peers, peer)
+						delete(q.peerToTopics, peer)
+					} else {
+						log.Println(err)
+					}
 				}
 			}
 		}
 	case "unsubscribe":
-		if _, ok := q.peers[peer][topic]; !ok {
-			if err := peer.Send([]byte("not subscribed to " + topic)); err != nil {
-				if err == io.EOF {
-					delete(q.peers, peer)
-				} else {
-					log.Println(err)
+		for _, topic := range topics {
+			if _, ok := q.topics[topic]; !ok {
+				if err := peer.Send([]byte("topic not found")); err != nil {
+					if err == io.EOF {
+						delete(q.peers, peer)
+						delete(q.peerToTopics, peer)
+					} else {
+						log.Println(err)
+					}
 				}
-			}
-		} else {
-			delete(q.peers[peer], topic)
-			slog.Info("Peer unsubscribed from topics", "peer", peer, "topics", topic, "peersTopics", q.peers[peer])
-			if err := peer.Send([]byte("unsubscribed from " + topic)); err != nil {
-				if err == io.EOF {
-					delete(q.peers, peer)
-				} else {
-					log.Println(err)
+			} else {
+				for idx, topicDetails := range q.peerToTopics[peer] {
+					if topicDetails.Topic == topic {
+						q.peerToTopics[peer] = append(q.peerToTopics[peer][:idx], q.peerToTopics[peer][idx+1:]...)
+						slog.Info("Peer unsubscribed from topics", "peer", peer, "topics", topic, "peersTopics", q.peerToTopics[peer])
+						if err := peer.Send([]byte("unsubscribed from " + topic)); err != nil {
+							if err == io.EOF {
+								delete(q.peers, peer)
+								delete(q.peerToTopics, peer)
+							} else {
+								log.Println(err)
+							}
+						}
+						break
+					}
+					if idx == len(q.peerToTopics[peer])-1 {
+						slog.Info("peer is not subscribed to topic anymore", "peer", peer, "topic", topic)
+					}
 				}
 			}
 		}
 	}
+
+	if len(q.peerToTopics[peer]) == 0 {
+		return
+	}
 }
 
-func (q *Queue) publish(msg Message) (int, error) {
+// Need to update it after all the new changes
+// Need To rewrite this section to asynchronously write messages to peers
+func (q *Queue) writeToPeer(peer Peer) {
+	for {
+		payload, err := q.topics[topic].Storage.Fetch(peerTopicDetails.offset)
+		if err != nil {
+			slog.Debug("Offset fetch error", "error", err)
+			peerTopicDetails.consuming = false
+			return
+		}
+		msg, err := json.Marshal(MessageToPeer{
+			Topic:   topic,
+			Payload: payload,
+			Offset:  peerTopicDetails.offset,
+		})
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		if err := peer.Send(msg); err != nil {
+			if err == io.EOF {
+				q.mu.Lock()
+				defer q.mu.Unlock()
+
+				delete(q.peers, peer)
+				delete(q.topicToPeers[topic], peer)
+				return
+			}
+			slog.Debug("Error sending message to peer", "error", err)
+			continue
+		}
+		peerTopicDetails.offset += 1
+	}
+}
+
+func (q *Queue) publish(msg MessageToTopic) (int, error) {
 	q.getStoreForTopic(msg.Topic)
 	return q.topics[msg.Topic].Push(msg.Payload)
 }

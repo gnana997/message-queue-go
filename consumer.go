@@ -15,16 +15,16 @@ type Consumer interface {
 }
 
 type WSConsumer struct {
-	ListenAddr   string
-	peerch       chan<- Peer
-	peerToTopics chan PeerToTopics
+	ListenAddr       string
+	peerch           chan<- Peer
+	peerTopicsAction chan PeerTopicsAction
 }
 
-func NewWSConsumer(listenAddr string, peerch chan Peer, peerToTopics chan PeerToTopics) *WSConsumer {
+func NewWSConsumer(listenAddr string, peerch chan Peer, peerTopicsAction chan PeerTopicsAction) *WSConsumer {
 	return &WSConsumer{
-		ListenAddr:   listenAddr,
-		peerch:       peerch,
-		peerToTopics: peerToTopics,
+		ListenAddr:       listenAddr,
+		peerch:           peerch,
+		peerTopicsAction: peerTopicsAction,
 	}
 }
 
@@ -39,7 +39,7 @@ func (wc *WSConsumer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fmt.Println(err)
 		return
 	}
-	wc.peerch <- NewWSPeer(conn, wc.peerToTopics)
+	wc.peerch <- NewWSPeer(conn, wc.peerTopicsAction)
 }
 
 type WSMessage struct {

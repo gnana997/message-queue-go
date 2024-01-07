@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"log/slog"
 
@@ -10,6 +11,12 @@ import (
 type WSMessage struct {
 	Action string   `json:"action"`
 	Topics []string `json:"topics"`
+}
+
+type Message struct {
+	Topic   string `json:"topic"`
+	Payload []byte `json:"payload"`
+	Offset  int    `json:"offset"`
 }
 
 func main() {
@@ -38,6 +45,13 @@ func main() {
 			log.Fatal(err)
 		}
 
-		slog.Info("received message", "message", string(msg))
+		var m Message
+		err = json.Unmarshal(msg, &m)
+		if err != nil {
+			slog.Error("error unmarshaling message", "err", err)
+			continue
+		}
+
+		slog.Info("received message from ", "topic", m.Topic, "message", string(m.Payload), "offset", m.Offset)
 	}
 }
