@@ -229,12 +229,16 @@ func (q *Queue) writeToPeer(peer Peer) {
 
 func (q *Queue) publish(msg MessageToTopic) (int, error) {
 	q.getStoreForTopic(msg.Topic)
-	return q.topics[msg.Topic].Push(msg.Payload)
+	return q.topics[msg.Topic].Storage.Push(msg.Payload)
 }
 
 func (q *Queue) getStoreForTopic(topic string) {
 	if _, ok := q.topics[topic]; !ok {
-		q.topics[topic] = q.StorageProducerFunc()
+		q.topics[topic] = &TopicDetails{
+			Storage:    q.StorageProducerFunc(),
+			publishing: false,
+		}
+		q.topicToPeers[topic] = make(map[Peer]*PeerTopicDetails)
 		slog.Info("Topis is created", "topic", topic)
 	}
 }
